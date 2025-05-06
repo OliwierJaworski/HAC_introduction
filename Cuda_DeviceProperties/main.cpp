@@ -18,6 +18,8 @@ int main(){
         printf("\nCUDA Device #%d\n", i);
         cudaDeviceProp DevProp;
         cudaGetDeviceProperties(&DevProp, i);
+        std::cout << "device clockrate is" <<  DevProp.clockRate << "\n";
+        std::cout << "device global memory is" <<  DevProp.totalGlobalMem<< "\n";
         printprops(DevProp);
     }
 }
