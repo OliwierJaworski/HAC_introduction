@@ -3,7 +3,7 @@ project(C_DeviceProperties VERSION 0.1.0 LANGUAGES CXX CUDA)
 
 find_package(CUDAToolkit REQUIRED)
 
-add_executable(C_DeviceProperties h2d_pinned.cu)
+add_executable(C_DeviceProperties main.cu)
 
 target_link_libraries(C_DeviceProperties PRIVATE CUDA::cudart)
 
