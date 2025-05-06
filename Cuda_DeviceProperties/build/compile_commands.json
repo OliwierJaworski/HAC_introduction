@@ -1,8 +1,0 @@
-[
-{
-  "directory": "/home/pcoli/projects/HAC/Cuda_DeviceProperties/build",
-  "command": "/usr/bin/c++   -g -o CMakeFiles/C_DeviceProperties.dir/main.cpp.o -c /home/pcoli/projects/HAC/Cuda_DeviceProperties/main.cpp",
-  "file": "/home/pcoli/projects/HAC/Cuda_DeviceProperties/main.cpp",
-  "output": "CMakeFiles/C_DeviceProperties.dir/main.cpp.o"
-}
-]

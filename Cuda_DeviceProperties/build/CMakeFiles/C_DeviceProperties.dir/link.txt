@@ -1,1 +1,0 @@
-/usr/bin/c++ -g CMakeFiles/C_DeviceProperties.dir/main.cpp.o -o C_DeviceProperties  /usr/lib/x86_64-linux-gnu/libcudart.so -ldl /usr/lib/x86_64-linux-gnu/librt.a

@@ -1,3 +1,0 @@
-/home/pcoli/projects/HAC/Cuda_DeviceProperties/build/CMakeFiles/C_DeviceProperties.dir
-/home/pcoli/projects/HAC/Cuda_DeviceProperties/build/CMakeFiles/edit_cache.dir
-/home/pcoli/projects/HAC/Cuda_DeviceProperties/build/CMakeFiles/rebuild_cache.dir
