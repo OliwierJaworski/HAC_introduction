@@ -18,5 +18,35 @@ Convolution::loadimage(){
                                 image->Getheight(),
                                 image->GetcomponentCount(), image->Getchannels()) ); 
     assert(image->GetData() && "[USER ERROR] : Provided image path does not exist.");  
+
+    if(*image->Getheight() != 640 && *image->GetWidth() != 480 )
+        assert("[USER ERROR] : Provided image resolution is not supported.");
+}
+void 
+Convolution::HostConvCalc(){
+    int& height = *image->Getheight();
+    int& width = *image->GetWidth();
+
+    for (int y = 0; y < height; y++){
+        
+        for (int x = 0; x < width; x++){
+
+        }
+    }
 }
 
+void 
+Convolution::perform(Actors actor){
+    switch(actor){
+        case Host:
+
+            break;
+        case Device:
+
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+            break;
+    }
+}

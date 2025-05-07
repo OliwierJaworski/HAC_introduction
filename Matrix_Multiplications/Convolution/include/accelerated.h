@@ -6,6 +6,10 @@
 #include "cuda.h"
 #include "cuda_runtime.h"
 
+enum Actors{
+    Host,
+    Device
+};
 
 struct Pixel
 {
@@ -35,12 +39,14 @@ private:
 
 class Convolution{
 public:
-
     void initialize();
+    void perform(Actors actor);
+
     Convolution(const char* image_path_){image = std::make_unique<Image_T>(image_path_);}
     ~Convolution(){}
 private:
     void loadimage();
+    void HostConvCalc();
     std::unique_ptr<Image_T> image;
 };
 
