@@ -6,7 +6,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image.h"
 #include "stb_image_write.h"
- 
+
 struct Pixel
 {
  unsigned char r, g, b, a;
@@ -30,7 +30,16 @@ void ConvertImageToGrayCpu(unsigned char* imageRGBA, int width, int height)
  
 __global__ void ConvertImageToGrayGpu(unsigned char* imageRGBA)
 {
-  // TODO
+    size_t x_index = threadIdx.x + (blockDim.x * blockIdx.x) ;
+    size_t y_index = threadIdx.y + (blockDim.y * blockIdx.y) ;
+    size_t image_width = blockDim.x * gridDim.x;
+
+    Pixel* ptrPixel = (Pixel*)&imageRGBA[y_index * image_width * 4 + 4* x_index];
+    unsigned char pixelValue = (unsigned char)(ptrPixel->r * 0.2126f + ptrPixel->g * 0.7152f + ptrPixel->b * 0.0722f);
+    ptrPixel->r = pixelValue;
+    ptrPixel->g = pixelValue;
+    ptrPixel->b = pixelValue;
+    ptrPixel->a = 255;
 }
   
 int main(int argc, char** argv)
@@ -62,11 +71,12 @@ int main(int argc, char** argv)
         return -1;
     }
  
-    
+    /*
     // Process image on cpu
-    printf("Processing image...\r\n)";
+    printf("Processing image...\r\n");
     ConvertImageToGrayCpu(imageData, width, height);
-    printf(" DONE \r\n)";
+    printf(" DONE \r\n");
+    */
     
     // Copy data to the gpu
     printf("Copy data to GPU...\r\n");
@@ -79,9 +89,9 @@ int main(int argc, char** argv)
     printf("Running CUDA Kernel...\r\n");
     dim3 blockSize(32, 32);
     dim3 gridSize(width / blockSize.x, height / blockSize.y);
-    //ConvertImageToGrayGpu<<<gridSize, blockSize>>>(ptrImageDataGpu);
+    ConvertImageToGrayGpu<<<gridSize, blockSize>>>(ptrImageDataGpu);
     printf(" DONE \r\n" ); 
- 
+  
     // Copy data from the gpu
     printf("Copy data from GPU...\r\n");
     cudaMemcpy(imageData, ptrImageDataGpu, width * height * 4, cudaMemcpyDeviceToHost);
