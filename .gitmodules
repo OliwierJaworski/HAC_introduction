@@ -1,0 +1,3 @@
+[submodule "Matrix_Multiplications/extensions/stb"]
+	path = Matrix_Multiplications/extensions/stb
+	url = https://github.com/nothings/stb.git
