@@ -5,8 +5,6 @@
 #include <assert.h>
 #include "cuda.h"
 #include "cuda_runtime.h"
-#include "stb_image.h"
-#include "stb_image_write.h"
 
 
 struct Pixel
@@ -18,10 +16,10 @@ struct Image_T{
 public:
     unsigned char* GetData()    { return imageData; };
     const char* GetFPath()      { return image_path; };
-    int* GetWidth()       { return &width; }
-    int* Getheight()      { return &height; }
-    int& Getchannels()      { return channels; }
-    int* GetcomponentCount()      { return &componentCount; }
+    int* GetWidth()             { return &width; }
+    int* Getheight()            { return &height; }
+    int& Getchannels()          { return channels; }
+    int* GetcomponentCount()    { return &componentCount; }
 
     void SetData(unsigned char* data_){ imageData = data_; };
 
