@@ -15,10 +15,7 @@ Convolution::initialize(const char* image_path_){
 void 
 Image_T::loadimage(){
     printf("Loading image file...\r\n");
-    SetData( stbi_load(  GetFPath(),
-                                GetWidth(),
-                                Getheight(),
-                                GetcomponentCount(), Getchannels()) ); 
+    SetData( stbi_load( image_path, &width, &height, &channels, 4 ) ); 
     assert(GetData() && "[USER ERROR] : Provided image path does not exist.");  
 
     if(*Getheight() != 640 && *GetWidth() != 480 )
@@ -30,13 +27,15 @@ Convolution::HostConvCalc(){
     printf("HostConvCalc being performed...\r\n");
     newImage = std::make_unique<Image_T>("Hostconvolution.png");
 
-    size_t height = *image->Getheight()/4;
-    size_t width = *image->GetWidth()/4;
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
 
-    newImage->SetHeight( height-2 );
-    newImage->SetWidth( width-2 );
-    newImage->SetcomponentCount( 4*(width*height) );
+    newImage->SetHeight( height-2 ); //because convolution does not calculate using border-pixels
+    newImage->SetWidth( width-2 ); //because convolution does not calculate using border-pixels
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
+
     newImage->AllocDataSize( *newImage->GetcomponentCount() );
+
     for (int y = 1; y < height-1; y++){
         
         for (int x =1; x < width-1; x++){
@@ -46,7 +45,7 @@ Convolution::HostConvCalc(){
 
                 for (int kx = -1; kx <= 1; kx++){
                     Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
-                    int weight = convolution[ky + 1][kx + 1];
+                    int weight = kernel[ky + 1][kx + 1];
                     acc_rgb[0] += pixel.r * weight;
                     acc_rgb[1] += pixel.g * weight;
                     acc_rgb[2] += pixel.b * weight;
@@ -57,7 +56,7 @@ Convolution::HostConvCalc(){
             int dst_x = x - 1;
             int dst_y = y - 1;
 
-            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[(dst_y * (width - 2) + dst_x) * 4];
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[(dst_y * (*newImage->GetWidth()) + dst_x) * 4];
             dst->r = checkbounds(acc_rgb[0]);
             dst->g = checkbounds(acc_rgb[1]); 
             dst->b = checkbounds(acc_rgb[2]);
@@ -65,7 +64,7 @@ Convolution::HostConvCalc(){
         }
     }
 
-    stbi_write_png(newImage->GetFPath(), width, height, 4, newImage->GetData(), 4 * width);
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
     printf("DONE\r\n");
 }
 
@@ -100,3 +99,4 @@ Image_T::loadPixels(){
         }
     }
 }
+

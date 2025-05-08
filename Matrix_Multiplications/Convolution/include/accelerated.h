@@ -37,6 +37,7 @@ public:
     void loadPixels();
 
     Image_T(const char* image_path_): image_path{ image_path_ }{}
+    ~Image_T(){ free(imageData); }
 private:
     std::vector<Pixel_t*> pixels;
     int width;
@@ -57,10 +58,10 @@ private:
     void initialize(const char* image_path_);
     unsigned char checkbounds(int val);
     void HostConvCalc();
-    
+
     std::unique_ptr<Image_T> newImage;
     std::unique_ptr<Image_T> image;
-    int convolution[3][3]{1,0,-1,
+    int kernel[3][3]{1,0,-1,
                           1,0,-1,
                           1,0,-1};
 
