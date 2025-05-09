@@ -56,7 +56,7 @@ public:
     ~Convolution(){}
 private:
     void initialize(const char* image_path_);
-    unsigned char checkbounds(int val);
+    unsigned char checkbounds(float val);
     void HostConvCalc();
 
     std::unique_ptr<Image_T> newImage;

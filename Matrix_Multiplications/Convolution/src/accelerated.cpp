@@ -38,29 +38,36 @@ Convolution::HostConvCalc(){
 
     for (int y = 1; y < height-1; y++){
         
-        for (int x =1; x < width-1; x++){
-            float acc_rgb[4]{0,0,0,0};
+        for (int x = 1; x < width-1; x++){
+            float acc_rgb[3]{0,0,0};
 
             for (int ky = -1; ky <= 1; ky++){
 
                 for (int kx = -1; kx <= 1; kx++){
                     Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
                     int weight = kernel[ky + 1][kx + 1];
+
                     acc_rgb[0] += pixel.r * weight;
                     acc_rgb[1] += pixel.g * weight;
-                    acc_rgb[2] += pixel.b * weight;
-                    acc_rgb[3] += pixel.a * weight;
+                    acc_rgb[2] += pixel.b * weight;                    
                 }
             }
+            acc_rgb[0] = std::abs(acc_rgb[0]);
+            acc_rgb[1] = std::abs(acc_rgb[1]);
+            acc_rgb[2] = std::abs(acc_rgb[2]);
+
+            float greyscaled = acc_rgb[0]* 0.2126f + acc_rgb[1]* 0.7152f + acc_rgb[2]* 0.0722f;
+            checkbounds(greyscaled);
 
             int dst_x = x - 1;
             int dst_y = y - 1;
 
-            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[(dst_y * (*newImage->GetWidth()) + dst_x) * 4];
-            dst->r = checkbounds(acc_rgb[0]);
-            dst->g = checkbounds(acc_rgb[1]); 
-            dst->b = checkbounds(acc_rgb[2]);
-            dst->a = checkbounds(acc_rgb[3]);
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+
+            dst->r = greyscaled;
+            dst->g = greyscaled; 
+            dst->b = greyscaled;
+            dst->a = 255;
         }
     }
 
@@ -69,8 +76,8 @@ Convolution::HostConvCalc(){
 }
 
 unsigned char 
-Convolution::checkbounds(int val) {
-    return val < 0 ? 0 : (val > 255 ? 255 : val);
+Convolution::checkbounds(float val) {
+    return val < 0 ? 0 : (val > 255 ? 255 : val); //cool effect
 }
 
 void 
