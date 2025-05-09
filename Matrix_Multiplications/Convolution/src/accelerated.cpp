@@ -23,6 +23,59 @@ Image_T::loadimage(){
 }
 
 void 
+Convolution::ConvCalc(Actors actor){
+
+    switch(actor){
+        case Host:
+                Convolution::instance().HostConvCalc();
+            break;
+
+        case Device:
+                Convolution::instance().DeviceConvCalc();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+            break;
+    }
+}
+void 
+Convolution::MaxP(Actors actor){
+
+    switch(actor){
+        case Host:
+               Convolution::instance().HostMaxP();
+            break;
+
+        case Device:
+                Convolution::instance().DeviceMaxP();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+            break;
+    } 
+}
+
+void 
+Convolution::MinP(Actors actor){
+
+    switch(actor){
+        case Host:
+                Convolution::instance().HostMinP();
+            break;
+
+        case Device:
+                Convolution::instance().DeviceMinP();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+            break;
+    }
+}
+
+void 
 Convolution::HostConvCalc(){
     printf("HostConvCalc being performed...\r\n");
     newImage = std::make_unique<Image_T>("Hostconvolution.png");
@@ -37,7 +90,7 @@ Convolution::HostConvCalc(){
     newImage->AllocDataSize( *newImage->GetcomponentCount() );
 
     for (int y = 1; y < height-1; y++){
-        
+                    
         for (int x = 1; x < width-1; x++){
             float acc_rgb[3]{0,0,0};
 
@@ -81,22 +134,6 @@ Convolution::checkbounds(float val) {
 }
 
 void 
-Convolution::perform(Actors actor){
-    switch(actor){
-        case Host:
-            HostConvCalc();
-            break;
-        case Device:
-
-            break;
-        default:
-            std::cout << "user provided unsupported perform() option\n";
-            exit(1);
-            break;
-    }
-}
-
-void 
 Image_T::loadPixels(){
     for (int y = 0; y < height; y++){
         
@@ -107,3 +144,14 @@ Image_T::loadPixels(){
     }
 }
 
+Convolution& 
+Convolution::instance(std::optional<char*> path){
+    static Convolution* conv = nullptr;
+
+    if (!conv && path.has_value()) {
+        conv = new Convolution(path.value());
+    } else if (!conv && !path.has_value()) {
+        throw std::runtime_error("Convolution::instance() needs a path on first call");
+    }
+    return *conv;
+}

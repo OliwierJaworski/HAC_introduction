@@ -6,6 +6,10 @@
 #include "cuda.h"
 #include "cuda_runtime.h"
 #include "vector"
+#include <cstdarg>
+#include <unordered_map>
+#include <functional>
+#include <optional>
 
 enum Actors{
     Host,
@@ -50,14 +54,25 @@ private:
 
 class Convolution{
 public:
-    void perform(Actors actor);
+    void ConvCalc(Actors actor);
+    void MaxP(Actors actor);
+    void MinP(Actors actor);
+
+    static Convolution& instance(std::optional<char*> path = std::nullopt );
 
     Convolution(const char* image_path_){ initialize( image_path_ ); }
     ~Convolution(){}
 private:
     void initialize(const char* image_path_);
     unsigned char checkbounds(float val);
+
     void HostConvCalc();
+    void HostMaxP(){}
+    void HostMinP(){}
+
+    void DeviceConvCalc(){}
+    void DeviceMaxP(){}
+    void DeviceMinP(){}
 
     std::unique_ptr<Image_T> newImage;
     std::unique_ptr<Image_T> image;
