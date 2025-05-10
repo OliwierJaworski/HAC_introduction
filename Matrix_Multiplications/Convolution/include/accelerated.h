@@ -35,7 +35,7 @@ public:
     void SetWidth(int width_)  { width = width_; };
     void SetHeight(int height_)  { height = height_; };
     void SetcomponentCount(int componentCount_)  { componentCount = componentCount_; };
-    void AllocDataSize(size_t size){ imageData = (unsigned char*) malloc(componentCount); };
+    void AllocDataSize(size_t size){ imageData = (unsigned char*) malloc(size); };
 
     void loadimage();
     void loadPixels();
@@ -67,8 +67,8 @@ private:
     unsigned char checkbounds(float val);
 
     void HostConvCalc();
-    void HostMaxP(){}
-    void HostMinP(){}
+    void HostMaxP();
+    void HostMinP();
 
     void DeviceConvCalc(){}
     void DeviceMaxP(){}
