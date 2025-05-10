@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <functional>
 #include <optional>
+#include <sstream>
 
 enum Actors{
     Host,
@@ -70,9 +71,9 @@ private:
     void HostMaxP();
     void HostMinP();
 
-    void DeviceConvCalc(){}
-    void DeviceMaxP(){}
-    void DeviceMinP(){}
+    void DeviceConvCalc();
+    void DeviceMaxP();
+    void DeviceMinP();
 
     std::unique_ptr<Image_T> newImage;
     std::unique_ptr<Image_T> image;

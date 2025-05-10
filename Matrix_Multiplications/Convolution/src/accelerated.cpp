@@ -77,8 +77,13 @@ Convolution::MinP(Actors actor){
 
 void 
 Convolution::HostConvCalc(){
-    printf("HostConvCalc being performed...\r\n");
-    newImage = std::make_unique<Image_T>("Hostconvolution.png");
+    std::cout << __func__ << " being performed\r\n";
+
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
+
+    newImage = std::make_unique<Image_T>(outPath.c_str());
 
     size_t height = *image->Getheight();
     size_t width = *image->GetWidth();
@@ -131,8 +136,13 @@ Convolution::HostConvCalc(){
 void 
 Convolution::HostMaxP(){
     //160x120
-    printf("HostMaxP being performed...\r\n");
-    newImage = std::make_unique<Image_T>("HostMaxP.png");
+    std::cout << __func__ << " being performed\r\n";
+
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
+
+    newImage = std::make_unique<Image_T>(outPath.c_str());
 
     size_t height = *image->Getheight();
     size_t width = *image->GetWidth();
@@ -177,12 +187,16 @@ Convolution::HostMaxP(){
 void 
 Convolution::HostMinP(){
     //160x120
-    printf("HostMinP being performed...\r\n");
-    newImage = std::make_unique<Image_T>("HostMinP.png");
+    std::cout << __func__ << " being performed\r\n";
+    
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
+
+    newImage = std::make_unique<Image_T>(outPath.c_str());
 
     size_t height = *image->Getheight();
     size_t width = *image->GetWidth();
-
     newImage->SetHeight( height / 2); 
     newImage->SetWidth( width / 2); 
     newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
