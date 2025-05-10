@@ -128,6 +128,98 @@ Convolution::HostConvCalc(){
     printf("DONE\r\n");
 }
 
+void 
+Convolution::HostMaxP(){
+    //160x120
+    printf("HostMaxP being performed...\r\n");
+    newImage = std::make_unique<Image_T>("HostMaxP.png");
+
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
+
+    newImage->SetHeight( height / 2); 
+    newImage->SetWidth( width / 2); 
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
+
+    newImage->AllocDataSize( *newImage->GetcomponentCount() );
+    
+    for (int y = 0; y < height; y+=2){
+                    
+        for (int x = 0; x < width; x+=2){
+            unsigned char max_rgb[3]{0,0,0};
+
+            for (int ky = 0; ky < 2; ky++){
+
+                for (int kx = 0; kx < 2; kx++){
+                    Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
+
+                    max_rgb[0] = (max_rgb[0] < pixel.r)? pixel.r : max_rgb[0];
+                    max_rgb[1] = (max_rgb[1] < pixel.g)? pixel.g : max_rgb[1];
+                    max_rgb[2] = (max_rgb[2] < pixel.b)? pixel.b : max_rgb[2];
+                }
+            }; 
+            
+            int dst_x = x /2;
+            int dst_y = y /2;
+            
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+            dst->r = max_rgb[0];
+            dst->g = max_rgb[1]; 
+            dst->b = max_rgb[2];
+            dst->a = 255;
+        }
+    }
+
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
+    printf("DONE\r\n");
+}
+
+void 
+Convolution::HostMinP(){
+    //160x120
+    printf("HostMinP being performed...\r\n");
+    newImage = std::make_unique<Image_T>("HostMinP.png");
+
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
+
+    newImage->SetHeight( height / 2); 
+    newImage->SetWidth( width / 2); 
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
+
+    newImage->AllocDataSize( *newImage->GetcomponentCount() );
+    
+    for (int y = 0; y < height; y+=2){
+                    
+        for (int x = 0; x < width; x+=2){
+            unsigned char min_rgb[3]{255,255,255};
+
+            for (int ky = 0; ky < 2; ky++){
+
+                for (int kx = 0; kx < 2; kx++){
+                    Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
+
+                    min_rgb[0] = (min_rgb[0] > pixel.r)? pixel.r : min_rgb[0];
+                    min_rgb[1] = (min_rgb[1] > pixel.g)? pixel.g : min_rgb[1];
+                    min_rgb[2] = (min_rgb[2] > pixel.b)? pixel.b : min_rgb[2];
+                }
+            }; 
+            
+            int dst_x = x /2;
+            int dst_y = y /2;
+
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+            dst->r = min_rgb[0];
+            dst->g = min_rgb[1]; 
+            dst->b = min_rgb[2];
+            dst->a = 255;
+        }
+    }
+
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
+    printf("DONE\r\n");
+}
+
 unsigned char 
 Convolution::checkbounds(float val) {
     return val < 0 ? 0 : (val > 255 ? 255 : val); //cool effect
