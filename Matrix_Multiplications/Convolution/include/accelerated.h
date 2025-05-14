@@ -31,6 +31,7 @@ public:
     int& Getchannels()                  { return channels; }
     int* GetcomponentCount()            { return &componentCount; }
     Pixel_t& GetPixel(size_t index)     { return *pixels[index];}
+    Pixel_t** GetPixelARR()     { return pixels.data();}
 
     void SetData(unsigned char* data_)  { imageData = data_; };
     void SetWidth(int width_)  { width = width_; };
@@ -42,7 +43,7 @@ public:
     void loadPixels();
 
     Image_T(const char* image_path_): image_path{ image_path_ }{}
-    ~Image_T(){ free(imageData); }
+    ~Image_T(){ if(imageData != nullptr) free(imageData); }
 private:
     std::vector<Pixel_t*> pixels;
     int width;
