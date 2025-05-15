@@ -4,8 +4,24 @@
 #include "stb_image_write.h"
 
 
-__constant__ int MM_CUDA[3][3];
-__constant__ int N; //item amount
+#define WIDTH 640
+#define HEIGHT 480
+
+#define TILE_W 32
+#define TILE_H 16
+
+#define KERNEL_W 3
+#define KERNEL_H 3
+
+#define IMG_PIXELS 307200 
+#define IMG_COMPONENTS (IMG_PIXELS * 4)
+
+__device__ __constant__ float d_KernelW[KERNEL_W];
+__device__ __constant__ float d_KernelH[KERNEL_H];
+
+
+dim3 threadPerBlock(TILE_W, TILE_H); // 32x16 = 512 threads per block
+dim3 blockGrids((WIDTH + TILE_W - 1) / TILE_W, (HEIGHT + TILE_H - 1) / TILE_H);
 
 void 
 Convolution::DeviceConvCalc(){
@@ -20,11 +36,9 @@ Convolution::DeviceConvCalc(){
     size_t height = *image->Getheight();
     size_t width = *image->GetWidth();
 
-    newImage->SetHeight( height-2 ); //because convolution does not calculate using border-pixels
-    newImage->SetWidth( width-2 ); //because convolution does not calculate using border-pixels
-    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
-
-    size_t num_pixels = *newImage->GetcomponentCount();
+    newImage->SetHeight( height );
+    newImage->SetWidth( width );
+    newImage->SetcomponentCount( height * width * 4 );
 
     Pixel_t* HIN_pixels;
     Pixel_t* HOUT_pixels;
@@ -32,41 +46,38 @@ Convolution::DeviceConvCalc(){
     Pixel_t* DIN_pixels;
     Pixel_t* DOUT_pixels;
 
-    cudaMemcpyToSymbol(MM_CUDA, &MM, 9 * sizeof(int));
-    cudaMemcpyToSymbol(N, &num_pixels, sizeof(size_t));
+    int MMH[3] = {-1,0,1};
+    int MMW[3] = {-1,-1,-1};
+    cudaMemcpyToSymbol(d_KernelH,&MMH , KERNEL_H * sizeof(int));
+    cudaMemcpyToSymbol(d_KernelW, &MMW, KERNEL_W * sizeof(int));
 
-    cudaMallocHost((void**)&HIN_pixels, ( sizeof(Pixel_t) * *image->GetcomponentCount()) ); //.input pixels
-    cudaMallocHost((void**)&HOUT_pixels, sizeof(Pixel_t) * num_pixels ); //output pixels
+    cudaMallocHost((void**)&HIN_pixels, sizeof(Pixel_t) * IMG_COMPONENTS ); 
+    cudaMallocHost((void**)&HOUT_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
     
     Pixel_t** pixels = image->GetPixelARR();
-    size_t NI_CC = (*newImage->GetcomponentCount());
-    for(size_t pxl{0}; pxl < NI_CC+1; pxl++){
+
+    for(size_t pxl{0}; pxl < IMG_COMPONENTS +1; pxl++){
         HIN_pixels[pxl] = *pixels[pxl];
     }
     memset(HOUT_pixels, 0, *newImage->GetcomponentCount() );
 
-    cudaMalloc((void**)&DIN_pixels, ( sizeof(Pixel_t) * *image->GetcomponentCount()) );
-    cudaMalloc((void**)&DOUT_pixels, ( sizeof(Pixel_t) * *newImage->GetcomponentCount()) );
+    cudaMalloc((void**)&DIN_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
+    cudaMalloc((void**)&DOUT_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
 
-    cudaMemcpy(DIN_pixels, HIN_pixels, NI_CC, cudaMemcpyHostToDevice);
+    cudaMemcpy(DIN_pixels, HIN_pixels, IMG_COMPONENTS, cudaMemcpyHostToDevice);
+    Cuda_ConvCalcRow<<<blockGrids, threadPerBlock>>>(HIN_pixels,DOUT_pixels);
 
-    //original 307200 pixels -> 300 blocks * 1024 threads
-    //output 304964 -> 1191.265 * 256 (1 extra block for remaining pixels)
-    Cuda_ConvCalc<<< (*newImage->GetcomponentCount()+255)/ 256, 256 >>>(DIN_pixels);
-    //stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
     printf("DONE\r\n");
 }
 
 __global__ void 
-Cuda_ConvCalc(Pixel_t* pixels){    
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx >= N) return;
+Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){    
+    
+}
 
-    for (int ky = -1; ky <= 1; ky++){
-        for (int kx = -1; kx <= 1; kx++){
-            
-        }
-    }    
+__global__ void 
+Cuda_ConvCalcColumn(Pixel_t* in, Pixel_t* out){    
+
 }
 
 void 
