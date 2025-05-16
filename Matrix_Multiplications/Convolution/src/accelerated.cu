@@ -12,6 +12,7 @@
 
 #define KERNEL_W 3
 #define KERNEL_H 3
+#define KERNEL_R 1
 
 #define IMG_PIXELS 307200 
 #define IMG_COMPONENTS (IMG_PIXELS * 4)
@@ -22,6 +23,59 @@ __device__ __constant__ float d_KernelH[KERNEL_H];
 
 dim3 threadPerBlock(TILE_W, TILE_H); // 32x16 = 512 threads per block
 dim3 blockGrids((WIDTH + TILE_W - 1) / TILE_W, (HEIGHT + TILE_H - 1) / TILE_H);
+
+
+__global__ void 
+Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){    
+    __shared__ Pixel_t data[KERNEL_R + TILE_W + KERNEL_R];
+
+    const int tileStart     = blockIdx.x * TILE_W;
+    const int tileEnd       = tileStart + TILE_W -1;
+    const int apronStart    = tileStart - KERNEL_R;
+    const int apronEnd      = tileEnd + KERNEL_R;
+
+    const int tileEndClamped    = min(tileEnd, WIDTH -1);
+    const int apronStartClamped = max(apronStart, 0);
+    const int apronEndClamped   = min(apronEnd, WIDTH -1);
+    
+    const int rowStart = blockIdx.y * WIDTH;
+
+    const int unaligned = tileStart - KERNEL_R; //= -1 for 0-1;
+    const int apronStartAligned = unaligned & ~15; // -1 = 0xFFFFFFFF | -1 & ~15 = 0xFFFFFFFF & 0xFFFFFFF0 = 0xFFFFFFF0 = -16
+
+    const int loadPos = apronStartAligned + threadIdx.x;
+
+    if(loadPos >= apronStart){
+        const int MemPos = loadPos - apronStart;
+
+        data[MemPos] = ( (loadPos >= apronStartClamped) && (loadPos <= apronEndClamped) ) ? in[rowStart + loadPos]: Pixel_t{0,0,0,0};
+    }
+
+    __syncthreads();
+
+    const int writePos = tileStart + threadIdx.x;
+
+    if(writePos <= tileEndClamped){
+        const int MemPos = writePos - apronStart;
+        float sum[3]{0,0,0};
+
+        for(int c{-1}; c < 2; c++){
+            int k = c + 1;
+            sum[0] += data[MemPos+c].r * d_KernelW[k];
+            sum[1] += data[MemPos+c].g * d_KernelW[k];
+            sum[2] += data[MemPos+c].b * d_KernelW[k];
+        }
+        float greyscaled = sum[0]* 0.2126f + sum[1]* 0.7152f + sum[2]* 0.0722f;
+        
+        auto clamp = [] __device__ (float val) {
+            return val < 0 ? 0 : (val > 255 ? 255 : val);
+        };
+
+        float clamped = clamp(greyscaled);
+
+        out[rowStart + writePos] = Pixel_t{ clamped, clamped, clamped, 255 };
+    }
+}
 
 void 
 Convolution::DeviceConvCalc(){
@@ -70,10 +124,7 @@ Convolution::DeviceConvCalc(){
     printf("DONE\r\n");
 }
 
-__global__ void 
-Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){    
-    
-}
+
 
 __global__ void 
 Cuda_ConvCalcColumn(Pixel_t* in, Pixel_t* out){    
