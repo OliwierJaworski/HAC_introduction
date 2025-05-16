@@ -95,7 +95,7 @@ public:
     void MaxP(Actors actor);
     void MinP(Actors actor);
 
-    static Convolution& instance(std::optional<char*> path = std::nullopt );
+    static Convolution& instance( char* path =nullptr );
 
     Convolution(const char* image_path_){ initialize( image_path_ ); }
     ~Convolution(){}

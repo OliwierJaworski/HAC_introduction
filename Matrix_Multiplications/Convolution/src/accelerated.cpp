@@ -251,12 +251,12 @@ Image_T::loadPixels(){
 }
 
 Convolution& 
-Convolution::instance(std::optional<char*> path){
+Convolution::instance(char* path){
     static Convolution* conv = nullptr;
 
-    if (!conv && path.has_value()) {
-        conv = new Convolution(path.value());
-    } else if (!conv && !path.has_value()) {
+    if (!conv && path != nullptr) {
+        conv = new Convolution(path);
+    } else if (!conv && path == nullptr) {
         throw std::runtime_error("Convolution::instance() needs a path on first call");
     }
     return *conv;
