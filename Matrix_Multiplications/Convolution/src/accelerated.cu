@@ -21,13 +21,14 @@ __device__ __constant__ float d_KernelW[KERNEL_W];
 __device__ __constant__ float d_KernelH[KERNEL_H];
 
 
-dim3 threadPerBlock(TILE_W, TILE_H); // 32x16 = 512 threads per block
+dim3 threadPerBlockRow(TILE_W + 2 * KERNEL_R, TILE_H);
+dim3 threadPerBlock(TILE_W, TILE_H);
 dim3 blockGrids((WIDTH + TILE_W - 1) / TILE_W, (HEIGHT + TILE_H - 1) / TILE_H);
 
 
 __global__ void 
 Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){    
-    __shared__ Pixel_t data[KERNEL_R + TILE_W + KERNEL_R];
+    __shared__ Pixel_t data[TILE_H][KERNEL_R + TILE_W + KERNEL_R];
 
     const int tileStart     = blockIdx.x * TILE_W;
     const int tileEnd       = tileStart + TILE_W -1;
@@ -37,46 +38,48 @@ Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){
     const int tileEndClamped    = min(tileEnd, WIDTH -1);
     const int apronStartClamped = max(apronStart, 0);
     const int apronEndClamped   = min(apronEnd, WIDTH -1);
-    
-    const int rowStart = blockIdx.y * WIDTH;
 
-    const int unaligned = tileStart - KERNEL_R; //= -1 for 0-1;
-    const int apronStartAligned = unaligned & ~15; // -1 = 0xFFFFFFFF | -1 & ~15 = 0xFFFFFFFF & 0xFFFFFFF0 = 0xFFFFFFF0 = -16
+    const int y = blockIdx.y * TILE_H + threadIdx.y;
+    if (y >= HEIGHT) return;
 
-    const int loadPos = apronStartAligned + threadIdx.x;
+    const int rowStart = y * WIDTH;
+    const int unaligned = apronStart;
+    const int apronStartAligned = unaligned & ~15;
 
-    if(loadPos >= apronStart){
-        const int MemPos = loadPos - apronStart;
+    for (int lx = threadIdx.x; lx < (TILE_W + 2 * KERNEL_R); lx += blockDim.x) {
+        int loadPos = apronStart + lx;
+        Pixel_t val = Pixel_t{0,0,0,0};
 
-        data[MemPos] = ( (loadPos >= apronStartClamped) && (loadPos <= apronEndClamped) ) ? in[rowStart + loadPos]: Pixel_t{0,0,0,0};
+        if (loadPos >= 0 && loadPos < WIDTH) {
+            val = in[y * WIDTH + loadPos];
+        }
+        data[threadIdx.y][lx] = val;
     }
 
     __syncthreads();
 
     const int writePos = tileStart + threadIdx.x;
+    if (writePos <= tileEndClamped){
+        int memPos = writePos - apronStart;
+        float sum[3]{0, 0, 0};
 
-    if(writePos <= tileEndClamped){
-        const int MemPos = writePos - apronStart;
-        float sum[3]{0,0,0};
-
-        for(int c{-1}; c < 2; c++){
+        for(int c = -1; c <= 1; ++c){
             int k = c + 1;
-            sum[0] += data[MemPos+c].r * d_KernelW[k];
-            sum[1] += data[MemPos+c].g * d_KernelW[k];
-            sum[2] += data[MemPos+c].b * d_KernelW[k];
+            sum[0] += data[threadIdx.y][memPos + c].r * d_KernelW[k];
+            sum[1] += data[threadIdx.y][memPos + c].g * d_KernelW[k];
+            sum[2] += data[threadIdx.y][memPos + c].b * d_KernelW[k];
         }
 
         auto clamp = [] __device__ (float val) {
             return val < 0 ? 0 : (val > 255 ? 255 : val);
         };
 
-        Pixel_t result;
-        result.r = clamp(sum[0]);
-        result.g = clamp(sum[1]);
-        result.b = clamp(sum[2]);
-        result.a = 255;
-
-        out[rowStart + writePos] = result;
+        out[rowStart + writePos] = Pixel_t{
+            static_cast<unsigned char>(clamp(sum[0])),
+            static_cast<unsigned char>(clamp(sum[1])),
+            static_cast<unsigned char>(clamp(sum[2])),
+            255
+        };
     }
 }
 
@@ -181,25 +184,72 @@ Convolution::DeviceConvCalc(){
 
     cudaMemcpy(DIN_pixels, HIN_pixels, IMG_COMPONENTS, cudaMemcpyHostToDevice);
 
-    Cuda_ConvCalcRow<<<blockGrids, threadPerBlock>>>(DIN_pixels,DTMP_RSLT);
+    cudaEvent_t startEvent, stopEvent;
+    cudaEventCreate(&startEvent);
+    cudaEventCreate(&stopEvent);
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error after kernel launch: %s\n", cudaGetErrorString(err));
+    float totalTimeRow = 0.0f;
+    float totalTimeColumn = 0.0f;
+
+    float warmupTimeRow = 0.0f;
+    float warmupTimeCol = 0.0f;
+
+    for (int i = 0; i < 11; ++i) {
+        float time = 0.0f;
+
+        // Row kernel timing
+        cudaEventRecord(startEvent, 0);
+        Cuda_ConvCalcRow<<<blockGrids, threadPerBlockRow>>>(DIN_pixels, DTMP_RSLT);
+        cudaDeviceSynchronize();
+        cudaEventRecord(stopEvent, 0);
+        cudaEventSynchronize(stopEvent);
+        cudaEventElapsedTime(&time, startEvent, stopEvent);
+        if (i == 0) {
+        warmupTimeRow = time;
+        } else {
+            totalTimeRow += time;
+        }
+
+        // Column kernel timing
+        time = 0.0f;
+        cudaEventRecord(startEvent, 0);
+        Cuda_ConvCalcColumn<<<blockGrids, threadPerBlock>>>(DTMP_RSLT, DOUT_pixels);
+        cudaDeviceSynchronize();
+        cudaEventRecord(stopEvent, 0);
+        cudaEventSynchronize(stopEvent);
+        cudaEventElapsedTime(&time, startEvent, stopEvent);
+        if (i == 0) {
+            warmupTimeCol = time;
+        } else {
+            totalTimeColumn += time;
+        }
     }
 
-    Cuda_ConvCalcColumn<<<blockGrids, threadPerBlock>>>(DTMP_RSLT, DOUT_pixels);
+    float avgRow = totalTimeRow / 10.0f;
+    float avgCol = totalTimeColumn / 10.0f;
+    float avgTotal = avgRow + avgCol;
+    float warmupTotal = warmupTimeRow + warmupTimeCol;
 
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error after kernel launch: %s\n", cudaGetErrorString(err));
-    }
+    printf("Warmup Row Kernel Time: %.4f ms\n", warmupTimeRow);
+    printf("Warmup Column Kernel Time: %.4f ms\n", warmupTimeCol);
+    printf("Warmup Total Time: %.4f ms\n", warmupTotal);
+    printf("Avg Row Kernel Time: %.4f ms\n", avgRow);
+    printf("Avg Column Kernel Time: %.4f ms\n", avgCol);
+    printf("Avg Total Time: %.4f ms\n", avgTotal);
 
-    cudaDeviceSynchronize();
+    cudaEventDestroy(startEvent);
+    cudaEventDestroy(stopEvent);
 
     cudaMemcpy(HOUT_pixels, DOUT_pixels, IMG_COMPONENTS, cudaMemcpyDeviceToHost);
 
     stbi_write_png(newImage->GetFPath(), width, height, 4, HOUT_pixels, width * 4);
+
+    cudaFreeHost(HIN_pixels);
+    cudaFreeHost(HOUT_pixels);
+
+    cudaFree(DIN_pixels);
+    cudaFree(DTMP_RSLT);
+    cudaFree(DOUT_pixels);
 
     printf("DONE\r\n");
 }
