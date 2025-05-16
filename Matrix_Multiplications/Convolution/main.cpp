@@ -6,7 +6,7 @@ void select(int& argc, char** argv);
 int main(int argc, char** argv){ 
     int argcc = 4;
     //char* args[] = { (char*)"program", (char*)"DEVICE", (char*)"Prewitt_Edge_detection", (char*)"./black_white.png" };
-    char* args[] = { (char*)"program", (char*)"DEVICE", (char*)"Prewitt_Edge_detection", (char*)"./wall-e.png" };
+    char* args[] = { (char*)"program", (char*)"DEVICE", (char*)"Min_pooling", (char*)"./wall-e.png" };
     select(argcc,args);
 
     return 0;

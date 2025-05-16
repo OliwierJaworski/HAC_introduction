@@ -289,28 +289,176 @@ Convolution::DeviceConvCalc(){
     printf("DONE\r\n");
 }
 
+__global__ void 
+Cuda_MaxP(const Pixel_t* input, Pixel_t* output, int width, int height) {
+    int out_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int out_y = blockIdx.y * blockDim.y + threadIdx.y;
 
+    int out_width = (width + 1) / 2;
+    int out_height = (height + 1) / 2;
 
+    if (out_x >= out_width || out_y >= out_height) return;
 
+    int in_x = out_x * 2;
+    int in_y = out_y * 2;
+
+    Pixel_t max_pixel = {0,0,0,0};
+
+    for (int dy = 0; dy < 2; ++dy) {
+        for (int dx = 0; dx < 2; ++dx) {
+            int x = in_x + dx;
+            int y = in_y + dy;
+            if (x < width && y < height) {
+                Pixel_t p = input[y * width + x];
+                if (p.r > max_pixel.r) max_pixel.r = p.r;
+                if (p.g > max_pixel.g) max_pixel.g = p.g;
+                if (p.b > max_pixel.b) max_pixel.b = p.b;
+                if (p.a > max_pixel.a) max_pixel.a = p.a;
+            }
+        }
+    }
+
+    output[out_y * out_width + out_x] = max_pixel;
+}
 
 void 
-Convolution::DeviceMaxP(){
+Convolution::DeviceMaxP() {
+    std::cout << __func__ << " being performed\r\n";
+    
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
 
+    size_t out_width = (width + 1) / 2;
+    size_t out_height = (height + 1) / 2;
+
+    newImage = std::make_unique<Image_T>("DeviceMaxP.png");
+    newImage->SetWidth(out_width);
+    newImage->SetHeight(out_height);
+    newImage->SetcomponentCount(out_width * out_height * 4);
+
+    Pixel_t* HIN_pixels;
+    Pixel_t* HOUT_pixels;
+    Pixel_t* DIN_pixels;
+    Pixel_t* DOUT_pixels;
+
+    size_t in_size = width * height * sizeof(Pixel_t);
+    size_t out_size = out_width * out_height * sizeof(Pixel_t);
+
+    cudaMallocHost((void**)&HIN_pixels, in_size);
+    cudaMallocHost((void**)&HOUT_pixels, out_size);
+
+    Pixel_t** pixels = image->GetPixelARR();
+    for(size_t i = 0; i < width * height; ++i) {
+        HIN_pixels[i] = *pixels[i];
+    }
+
+    cudaMalloc((void**)&DIN_pixels, in_size);
+    cudaMalloc((void**)&DOUT_pixels, out_size);
+
+    cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
+
+    dim3 blockDim(16,16);
+    dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
+                 (out_height + blockDim.y - 1) / blockDim.y);
+
+    Cuda_MaxP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
+
+    stbi_write_png(newImage->GetFPath(), out_width, out_height, 4, HOUT_pixels, out_width * 4);
+
+    cudaFreeHost(HIN_pixels);
+    cudaFreeHost(HOUT_pixels);
+    cudaFree(DIN_pixels);
+    cudaFree(DOUT_pixels);
+
+    printf("DONE\n");
+}
+
+__global__ void 
+Cuda_MinP(const Pixel_t* input, Pixel_t* output, int width, int height) {
+    int out_x = blockIdx.x * blockDim.x + threadIdx.x;
+    int out_y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    int out_width = (width + 1) / 2;
+    int out_height = (height + 1) / 2;
+
+    if (out_x >= out_width || out_y >= out_height) return;
+
+    int in_x = out_x * 2;
+    int in_y = out_y * 2;
+
+    Pixel_t min_pixel = {255,255,255,255};
+
+    for (int dy = 0; dy < 2; ++dy) {
+        for (int dx = 0; dx < 2; ++dx) {
+            int x = in_x + dx;
+            int y = in_y + dy;
+            if (x < width && y < height) {
+                Pixel_t p = input[y * width + x];
+                if (p.r < min_pixel.r) min_pixel.r = p.r;
+                if (p.g < min_pixel.g) min_pixel.g = p.g;
+                if (p.b < min_pixel.b) min_pixel.b = p.b;
+                if (p.a < min_pixel.a) min_pixel.a = p.a;
+            }
+        }
+    }
+
+    output[out_y * out_width + out_x] = min_pixel;
 }
 
 void 
-Convolution::DeviceMinP(){
+Convolution::DeviceMinP() {
+    std::cout << __func__ << " being performed\r\n";
 
-}
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
 
+    size_t out_width = (width + 1) / 2;
+    size_t out_height = (height + 1) / 2;
 
+    newImage = std::make_unique<Image_T>("DeviceMinP.png");
+    newImage->SetWidth(out_width);
+    newImage->SetHeight(out_height);
+    newImage->SetcomponentCount(out_width * out_height * 4);
 
-__global__ void 
-Cuda_MaxP(Pixel_t* pixels){
+    Pixel_t* HIN_pixels;
+    Pixel_t* HOUT_pixels;
+    Pixel_t* DIN_pixels;
+    Pixel_t* DOUT_pixels;
 
-}
+    size_t in_size = width * height * sizeof(Pixel_t);
+    size_t out_size = out_width * out_height * sizeof(Pixel_t);
 
-__global__ void 
-Cuda_MinP(){
+    cudaMallocHost((void**)&HIN_pixels, in_size);
+    cudaMallocHost((void**)&HOUT_pixels, out_size);
 
+    Pixel_t** pixels = image->GetPixelARR();
+    for (size_t i = 0; i < width * height; ++i) {
+        HIN_pixels[i] = *pixels[i];
+    }
+
+    cudaMalloc((void**)&DIN_pixels, in_size);
+    cudaMalloc((void**)&DOUT_pixels, out_size);
+
+    cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
+
+    dim3 blockDim(16, 16);
+    dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
+                 (out_height + blockDim.y - 1) / blockDim.y);
+
+    Cuda_MinP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
+
+    stbi_write_png(newImage->GetFPath(), out_width, out_height, 4, HOUT_pixels, out_width * 4);
+
+    cudaFreeHost(HIN_pixels);
+    cudaFreeHost(HOUT_pixels);
+    cudaFree(DIN_pixels);
+    cudaFree(DOUT_pixels);
+
+    printf("DONE\n");
 }
