@@ -71,9 +71,9 @@ Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){
             return val < 0 ? 0 : (val > 255 ? 255 : val);
         };
 
-        float clamped = clamp(greyscaled);
+        unsigned char clamped_GS = clamp(greyscaled);
 
-        out[rowStart + writePos] = Pixel_t{ clamped, clamped, clamped, 255 };
+        out[rowStart + writePos] = Pixel_t{ clamped_GS, clamped_GS, clamped_GS, 255 };
     }
 }
 
@@ -105,21 +105,25 @@ Convolution::DeviceConvCalc(){
     cudaMemcpyToSymbol(d_KernelH,&MMH , KERNEL_H * sizeof(int));
     cudaMemcpyToSymbol(d_KernelW, &MMW, KERNEL_W * sizeof(int));
 
-    cudaMallocHost((void**)&HIN_pixels, sizeof(Pixel_t) * IMG_COMPONENTS ); 
-    cudaMallocHost((void**)&HOUT_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
+    cudaMallocHost((void**)&HIN_pixels, sizeof(Pixel_t) * IMG_PIXELS ); 
+    cudaMallocHost((void**)&HOUT_pixels, sizeof(Pixel_t) * IMG_PIXELS );
     
     Pixel_t** pixels = image->GetPixelARR();
 
-    for(size_t pxl{0}; pxl < IMG_COMPONENTS +1; pxl++){
+    for(size_t pxl{0}; pxl < IMG_PIXELS; ++pxl){
         HIN_pixels[pxl] = *pixels[pxl];
     }
     memset(HOUT_pixels, 0, *newImage->GetcomponentCount() );
 
-    cudaMalloc((void**)&DIN_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
-    cudaMalloc((void**)&DOUT_pixels, sizeof(Pixel_t) * IMG_COMPONENTS );
+    cudaMalloc((void**)&DIN_pixels, sizeof(Pixel_t) * IMG_PIXELS );
+    cudaMalloc((void**)&DOUT_pixels, sizeof(Pixel_t) * IMG_PIXELS );
 
     cudaMemcpy(DIN_pixels, HIN_pixels, IMG_COMPONENTS, cudaMemcpyHostToDevice);
-    Cuda_ConvCalcRow<<<blockGrids, threadPerBlock>>>(HIN_pixels,DOUT_pixels);
+    Cuda_ConvCalcRow<<<blockGrids, threadPerBlock>>>(DIN_pixels,DOUT_pixels);
+
+    cudaMemcpy(HOUT_pixels, DOUT_pixels, IMG_COMPONENTS, cudaMemcpyDeviceToHost);
+
+    stbi_write_png(newImage->GetFPath(), width, height, 4, HOUT_pixels, width * 4);
 
     printf("DONE\r\n");
 }
