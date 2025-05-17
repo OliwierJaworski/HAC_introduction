@@ -1,3 +1,4 @@
+
 /*
  * Copyright 1993-2007 NVIDIA Corporation.  All rights reserved.
  *
@@ -33,11 +34,22 @@
  * the above Disclaimer and U.S. Government End Users Notice.
  */
 
+
+
+
+/**
+ * @file accelerated_kernels.cu
+ * @brief Device-side CUDA kernels and implementations for convolution and pooling.
+ *
+ * @details Defines separable convolution kernels (horizontal and vertical passes),
+ *          2×2 pooling kernels, and the `Convolution::Device*` methods that manage
+ *          device memory, kernel launches, timing, and output image writing.
+ */
+
 #include "accelerated.h"
 
 #include "stb_image.h"
 #include "stb_image_write.h"
-
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -52,63 +64,100 @@
 #define IMG_PIXELS 307200 
 #define IMG_COMPONENTS (IMG_PIXELS * 4)
 
+/**
+ * @var d_KernelW
+ * @brief Device constant memory for horizontal convolution kernel weights.
+ *
+ * @details Stored in __constant__ memory for fast broadcast to all threads.
+ */
 __device__ __constant__ float d_KernelW[KERNEL_W];
+
+/**
+ * @var d_KernelH
+ * @brief Device constant memory for vertical convolution kernel weights.
+ *
+ * @details Stored in __constant__ memory for fast broadcast to all threads.
+ */
 __device__ __constant__ float d_KernelH[KERNEL_H];
 
-
+/**
+ * @var threadPerBlockRow
+ * @brief Block dimensions for the horizontal convolution kernel.
+ *
+ * @details Grid dimensions: TILE_W + 2*KERNEL_R columns × TILE_H rows per block.
+ */
 dim3 threadPerBlockRow(TILE_W + 2 * KERNEL_R, TILE_H);
+
+/**
+ * @var threadPerBlock
+ * @brief Block dimensions for the vertical convolution kernel.
+ *
+ * @details Grid dimensions: TILE_W columns × TILE_H rows per block.
+ */
 dim3 threadPerBlock(TILE_W, TILE_H);
+
+/**
+ * @var blockGrids
+ * @brief Grid dimensions for both convolution kernels.
+ *
+ * @details Computed as ceil(WIDTH / TILE_W) × ceil(HEIGHT / TILE_H).
+ */
 dim3 blockGrids((WIDTH + TILE_W - 1) / TILE_W, (HEIGHT + TILE_H - 1) / TILE_H);
 
-
+/**
+ * @kernel Cuda_ConvCalcRow
+ * @brief Horizontal pass of separable convolution using shared memory tiling.
+ *
+ * @param in  Input image pixel buffer on device.
+ * @param out Intermediate output buffer before vertical pass.
+ *
+ * @details Loads a TILE_H×(TILE_W+2*KERNEL_R) tile into shared memory with apron,
+ *          applies 1D horizontal kernel d_KernelW, clamps results, and writes to out.
+ */
 __global__ void 
 Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){    
     __shared__ Pixel_t data[TILE_H][KERNEL_R + TILE_W + KERNEL_R];
 
     const int tileStart     = blockIdx.x * TILE_W;
-    const int tileEnd       = tileStart + TILE_W -1;
+    const int tileEnd       = tileStart + TILE_W - 1;
     const int apronStart    = tileStart - KERNEL_R;
-    const int apronEnd      = tileEnd + KERNEL_R;
+    const int apronEnd      = tileEnd   + KERNEL_R;
 
-    const int tileEndClamped    = min(tileEnd, WIDTH -1);
+    const int tileEndClamped    = min(tileEnd, WIDTH - 1);
     const int apronStartClamped = max(apronStart, 0);
-    const int apronEndClamped   = min(apronEnd, WIDTH -1);
+    const int apronEndClamped   = min(apronEnd, WIDTH - 1);
 
     const int y = blockIdx.y * TILE_H + threadIdx.y;
     if (y >= HEIGHT) return;
 
     const int rowStart = y * WIDTH;
-    const int unaligned = apronStart;
-    const int apronStartAligned = unaligned & ~15;
 
-    for (int lx = threadIdx.x; lx < (TILE_W + 2 * KERNEL_R); lx += blockDim.x) {
+    // Load tile + apron into shared memory
+    for (int lx = threadIdx.x; lx < TILE_W + 2 * KERNEL_R; lx += blockDim.x) {
         int loadPos = apronStart + lx;
         Pixel_t val = Pixel_t{0,0,0,0};
-
-        if (loadPos >= 0 && loadPos < WIDTH) {
-            val = in[y * WIDTH + loadPos];
+        if (loadPos >= apronStartClamped && loadPos <= apronEndClamped) {
+            val = in[rowStart + loadPos];
         }
         data[threadIdx.y][lx] = val;
     }
 
     __syncthreads();
 
+    // Apply horizontal kernel
     const int writePos = tileStart + threadIdx.x;
-    if (writePos <= tileEndClamped){
+    if (writePos <= tileEndClamped) {
         int memPos = writePos - apronStart;
         float sum[3]{0, 0, 0};
-
-        for(int c = -1; c <= 1; ++c){
+        for (int c = -1; c <= 1; ++c) {
             int k = c + 1;
             sum[0] += data[threadIdx.y][memPos + c].r * d_KernelW[k];
             sum[1] += data[threadIdx.y][memPos + c].g * d_KernelW[k];
             sum[2] += data[threadIdx.y][memPos + c].b * d_KernelW[k];
         }
-
-        auto clamp = [] __device__ (float val) {
-            return val < 0 ? 0 : (val > 255 ? 255 : val);
+        auto clamp = [] __device__ (float v) {
+            return v < 0 ? 0 : (v > 255 ? 255 : v);
         };
-
         out[rowStart + writePos] = Pixel_t{
             static_cast<unsigned char>(clamp(sum[0])),
             static_cast<unsigned char>(clamp(sum[1])),
@@ -118,347 +167,301 @@ Cuda_ConvCalcRow(Pixel_t* in, Pixel_t* out){
     }
 }
 
+/**
+ * @kernel Cuda_ConvCalcColumn
+ * @brief Vertical pass of separable convolution using shared memory tiling.
+ *
+ * @param in  Intermediate buffer from horizontal pass.
+ * @param out Final output pixel buffer (greyscale) on device.
+ *
+ * @details Loads a (TILE_W×TILE_H+2*KERNEL_R) vertical tile into shared memory with apron,
+ *          applies 1D vertical kernel d_KernelH, converts to greyscale, clamps, and writes to out.
+ */
 __global__ void 
 Cuda_ConvCalcColumn(Pixel_t* in, Pixel_t* out){    
-     __shared__ Pixel_t data[TILE_W * (KERNEL_R + TILE_H + KERNEL_R)];
+    __shared__ Pixel_t data[TILE_W * (KERNEL_R + TILE_H + KERNEL_R)];
 
-    const int         tileStart = blockIdx.y * TILE_H;
-    const int           tileEnd = tileStart + TILE_H - 1;
-    const int        apronStart = tileStart - KERNEL_R;
-    const int          apronEnd = tileEnd   + KERNEL_R;
+    const int tileStart       = blockIdx.y * TILE_H;
+    const int tileEnd         = tileStart + TILE_H - 1;
+    const int apronStart      = tileStart - KERNEL_R;
+    const int apronEnd        = tileEnd   + KERNEL_R;
+    const int tileEndClamp    = min(tileEnd, HEIGHT - 1);
+    const int apronStartClamp = max(apronStart, 0);
+    const int apronEndClamp   = min(apronEnd, HEIGHT - 1);
 
-    const int    tileEndClamped = min(tileEnd, HEIGHT - 1);
-    const int apronStartClamped = max(apronStart, 0);
-    const int   apronEndClamped = min(apronEnd, HEIGHT - 1);
+    const int columnStart = blockIdx.x * TILE_W + threadIdx.x;
 
-    const int       columnStart = (blockIdx.x * TILE_W) + threadIdx.x;
-
-    int smemPos = (threadIdx.y * TILE_W) + threadIdx.x;
-    int gmemPos = ((apronStart + threadIdx.y) * WIDTH) + columnStart;
-
-    for(int y = apronStart + threadIdx.y; y <= apronEnd; y += blockDim.y){
-        data[smemPos] = 
-        ((y >= apronStartClamped) && (y <= apronEndClamped)) ? 
-        in[gmemPos] : Pixel_t{0,0,0,0};
+    // Load vertical tile + apron
+    int smemPos = threadIdx.y * TILE_W + threadIdx.x;
+    int gmemPos = (apronStart + threadIdx.y) * WIDTH + columnStart;
+    for (int y = apronStart; y <= apronEnd; y += blockDim.y) {
+        data[smemPos] = ((y >= apronStartClamp && y <= apronEndClamp)
+                         ? in[gmemPos]
+                         : Pixel_t{0,0,0,0});
         smemPos += TILE_W * blockDim.y;
         gmemPos += WIDTH * blockDim.y;
     }
 
     __syncthreads();
 
-    smemPos = ((threadIdx.y + KERNEL_R) * TILE_W) + threadIdx.x;
-    gmemPos = ((tileStart + threadIdx.y) * WIDTH) + columnStart;
-
-    for(int y = tileStart + threadIdx.y; y <= tileEndClamped; y += blockDim.y){
+    // Apply vertical kernel and greyscale
+    smemPos = (threadIdx.y + KERNEL_R) * TILE_W + threadIdx.x;
+    gmemPos = (tileStart + threadIdx.y) * WIDTH + columnStart;
+    for (int y = tileStart; y <= tileEndClamp; y += blockDim.y) {
         float sum[3]{0,0,0};
-
-        for(int c{-1}; c < 2; c++){
+        for (int c = -1; c <= 1; ++c) {
             int k = c + 1;
-            sum[0] += data[smemPos+c*TILE_W].r * d_KernelH[k];
-            sum[1] += data[smemPos+c*TILE_W].g * d_KernelH[k];
-            sum[2] += data[smemPos+c*TILE_W].b * d_KernelH[k];
+            sum[0] += data[smemPos + c * TILE_W].r * d_KernelH[k];
+            sum[1] += data[smemPos + c * TILE_W].g * d_KernelH[k];
+            sum[2] += data[smemPos + c * TILE_W].b * d_KernelH[k];
         }
-
-        float greyscaled = sum[0] * 0.2126f + sum[1] * 0.7152f + sum[2] * 0.0722f;  
-
-        auto clamp = [] __device__ (float val) {
-            return val < 0 ? 0 : (val > 255 ? 255 : val);
+        float grey = sum[0] * 0.2126f + sum[1] * 0.7152f + sum[2] * 0.0722f;
+        auto clamp = [] __device__ (float v) {
+            return v < 0 ? 0 : (v > 255 ? 255 : v);
         };
-
-        unsigned char clamped_GS = clamp(greyscaled);
-
-        out[gmemPos] = Pixel_t{ clamped_GS, clamped_GS, clamped_GS, 255 };
-
+        unsigned char gs = clamp(grey);
+        out[gmemPos] = Pixel_t{gs, gs, gs, 255};
         smemPos += TILE_W * blockDim.y;
         gmemPos += WIDTH * blockDim.y;
     }
-} 
+}
 
+/**
+ * @brief Device implementation of full separable convolution.
+ *
+ * @details Copies image data to device, copies kernels to constant memory,
+ *          launches horizontal and vertical passes with timing measurement,
+ *          retrieves results from device, and writes output PNG.
+ */
 void 
 Convolution::DeviceConvCalc(){
     std::cout << __func__ << " being performed\r\n";
-    
-    std::stringstream s;
-    s << __func__ << ".png";
-    std::string outPath = s.str();
 
+    std::stringstream s; s << __func__ << ".png";
+    std::string outPath = s.str();
     newImage = std::make_unique<Image_T>(outPath.c_str());
 
-    size_t height = *image->Getheight();
-    size_t width = *image->GetWidth();
+    size_t height = *image->GetHeight();
+    size_t width  = *image->GetWidth();
+    newImage->SetHeight(height);
+    newImage->SetWidth(width);
+    newImage->SetComponentCount(height * width * 4);
 
-    newImage->SetHeight( height );
-    newImage->SetWidth( width );
-    newImage->SetcomponentCount( height * width * 4 );
-
-    Pixel_t* HIN_pixels;
-    Pixel_t* HOUT_pixels;
-
-    Pixel_t* DIN_pixels;
-    Pixel_t* DTMP_RSLT;
-    Pixel_t* DOUT_pixels;
-
+    Pixel_t *HIN, *HOUT, *DIN, *DTMP, *DOUT;
     float MMH[3] = {1.0f, 1.0f, 1.0f};
     float MMW[3] = {-1.0f, 0.0f, 1.0f};
-    cudaMemcpyToSymbol(d_KernelH,&MMH , KERNEL_H * sizeof(float));
+    cudaMemcpyToSymbol(d_KernelH, &MMH, KERNEL_H * sizeof(float));
     cudaMemcpyToSymbol(d_KernelW, &MMW, KERNEL_W * sizeof(float));
 
-    cudaMallocHost((void**)&HIN_pixels, sizeof(Pixel_t) * IMG_PIXELS ); 
-    cudaMallocHost((void**)&HOUT_pixels, sizeof(Pixel_t) * IMG_PIXELS );
-    
-    Pixel_t** pixels = image->GetPixelARR();
-
-    for(size_t pxl{0}; pxl < IMG_PIXELS; ++pxl){
-        HIN_pixels[pxl] = *pixels[pxl];
+    cudaMallocHost((void**)&HIN,  sizeof(Pixel_t) * IMG_PIXELS);
+    cudaMallocHost((void**)&HOUT, sizeof(Pixel_t) * IMG_PIXELS);
+    Pixel_t** pix = image->GetPixelARR();
+    for (size_t i = 0; i < IMG_PIXELS; ++i) {
+        HIN[i] = *pix[i];
     }
-    memset(HOUT_pixels, 0, IMG_COMPONENTS );
+    memset(HOUT, 0, IMG_COMPONENTS);
 
-    cudaMalloc((void**)&DIN_pixels, sizeof(Pixel_t) * IMG_PIXELS );
-    cudaMalloc((void**)&DTMP_RSLT, sizeof(Pixel_t) * IMG_PIXELS);
-    cudaMalloc((void**)&DOUT_pixels, sizeof(Pixel_t) * IMG_PIXELS );
+    cudaMalloc((void**)&DIN,  sizeof(Pixel_t) * IMG_PIXELS);
+    cudaMalloc((void**)&DTMP, sizeof(Pixel_t) * IMG_PIXELS);
+    cudaMalloc((void**)&DOUT, sizeof(Pixel_t) * IMG_PIXELS);
 
-    cudaMemcpy(DIN_pixels, HIN_pixels, IMG_COMPONENTS, cudaMemcpyHostToDevice);
+    cudaMemcpy(DIN, HIN, IMG_COMPONENTS, cudaMemcpyHostToDevice);
 
-    cudaEvent_t startEvent, stopEvent;
-    cudaEventCreate(&startEvent);
-    cudaEventCreate(&stopEvent);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
-    float totalTimeRow = 0.0f;
-    float totalTimeColumn = 0.0f;
-
-    float warmupTimeRow = 0.0f;
-    float warmupTimeCol = 0.0f;
-
+    float totalRow = 0, totalCol = 0, warmRow = 0, warmCol = 0;
     for (int i = 0; i < 11; ++i) {
-        float time = 0.0f;
-
-        // Row kernel timing
-        cudaEventRecord(startEvent, 0);
-        Cuda_ConvCalcRow<<<blockGrids, threadPerBlockRow>>>(DIN_pixels, DTMP_RSLT);
+        float t = 0;
+        cudaEventRecord(start);
+        Cuda_ConvCalcRow<<<blockGrids, threadPerBlockRow>>>(DIN, DTMP);
         cudaDeviceSynchronize();
-        cudaEventRecord(stopEvent, 0);
-        cudaEventSynchronize(stopEvent);
-        cudaEventElapsedTime(&time, startEvent, stopEvent);
-        if (i == 0) {
-        warmupTimeRow = time;
-        } else {
-            totalTimeRow += time;
-        }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&t, start, stop);
+        (i == 0 ? warmRow : totalRow) += t;
 
-        // Column kernel timing
-        time = 0.0f;
-        cudaEventRecord(startEvent, 0);
-        Cuda_ConvCalcColumn<<<blockGrids, threadPerBlock>>>(DTMP_RSLT, DOUT_pixels);
+        t = 0;
+        cudaEventRecord(start);
+        Cuda_ConvCalcColumn<<<blockGrids, threadPerBlock>>>(DTMP, DOUT);
         cudaDeviceSynchronize();
-        cudaEventRecord(stopEvent, 0);
-        cudaEventSynchronize(stopEvent);
-        cudaEventElapsedTime(&time, startEvent, stopEvent);
-        if (i == 0) {
-            warmupTimeCol = time;
-        } else {
-            totalTimeColumn += time;
-        }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&t, start, stop);
+        (i == 0 ? warmCol : totalCol) += t;
     }
 
-    float avgRow = totalTimeRow / 10.0f;
-    float avgCol = totalTimeColumn / 10.0f;
-    float avgTotal = avgRow + avgCol;
-    float warmupTotal = warmupTimeRow + warmupTimeCol;
+    printf("Warmup Row: %.4f ms, Col: %.4f ms, Total: %.4f ms\n", warmRow, warmCol, warmRow + warmCol);
+    printf("Avg Row: %.4f ms, Col: %.4f ms, Total: %.4f ms\n", totalRow/10, totalCol/10, (totalRow+totalCol)/10);
 
-    printf("Warmup Row Kernel Time: %.4f ms\n", warmupTimeRow);
-    printf("Warmup Column Kernel Time: %.4f ms\n", warmupTimeCol);
-    printf("Warmup Total Time: %.4f ms\n", warmupTotal);
-    printf("Avg Row Kernel Time: %.4f ms\n", avgRow);
-    printf("Avg Column Kernel Time: %.4f ms\n", avgCol);
-    printf("Avg Total Time: %.4f ms\n", avgTotal);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
-    cudaEventDestroy(startEvent);
-    cudaEventDestroy(stopEvent);
+    cudaMemcpy(HOUT, DOUT, IMG_COMPONENTS, cudaMemcpyDeviceToHost);
+    stbi_write_png(newImage->GetFPath(), width, height, 4, HOUT, width * 4);
 
-    cudaMemcpy(HOUT_pixels, DOUT_pixels, IMG_COMPONENTS, cudaMemcpyDeviceToHost);
-
-    stbi_write_png(newImage->GetFPath(), width, height, 4, HOUT_pixels, width * 4);
-
-    cudaFreeHost(HIN_pixels);
-    cudaFreeHost(HOUT_pixels);
-
-    cudaFree(DIN_pixels);
-    cudaFree(DTMP_RSLT);
-    cudaFree(DOUT_pixels);
+    cudaFreeHost(HIN);
+    cudaFreeHost(HOUT);
+    cudaFree(DIN);
+    cudaFree(DTMP);
+    cudaFree(DOUT);
 
     printf("DONE\r\n");
 }
 
+/**
+ * @kernel Cuda_MaxP
+ * @brief Device kernel for 2×2 max pooling.
+ *
+ * @param input  Input image pixel buffer.
+ * @param output Downsampled output buffer.
+ * @param width  Input image width.
+ * @param height Input image height.
+ */
 __global__ void 
 Cuda_MaxP(const Pixel_t* input, Pixel_t* output, int width, int height) {
     int out_x = blockIdx.x * blockDim.x + threadIdx.x;
     int out_y = blockIdx.y * blockDim.y + threadIdx.y;
+    int out_w = (width + 1) / 2;
+    if (out_x >= out_w || out_y >= (height + 1) / 2) return;
 
-    int out_width = (width + 1) / 2;
-    int out_height = (height + 1) / 2;
-
-    if (out_x >= out_width || out_y >= out_height) return;
-
-    int in_x = out_x * 2;
-    int in_y = out_y * 2;
-
-    Pixel_t max_pixel = {0,0,0,0};
-
+    Pixel_t max_p = {0,0,0,0};
     for (int dy = 0; dy < 2; ++dy) {
         for (int dx = 0; dx < 2; ++dx) {
-            int x = in_x + dx;
-            int y = in_y + dy;
+            int x = out_x*2 + dx;
+            int y = out_y*2 + dy;
             if (x < width && y < height) {
-                Pixel_t p = input[y * width + x];
-                if (p.r > max_pixel.r) max_pixel.r = p.r;
-                if (p.g > max_pixel.g) max_pixel.g = p.g;
-                if (p.b > max_pixel.b) max_pixel.b = p.b;
-                if (p.a > max_pixel.a) max_pixel.a = p.a;
+                Pixel_t p = input[y*width + x];
+                max_p.r = max(max_p.r, p.r);
+                max_p.g = max(max_p.g, p.g);
+                max_p.b = max(max_p.b, p.b);
+                max_p.a = max(max_p.a, p.a);
             }
         }
     }
-
-    output[out_y * out_width + out_x] = max_pixel;
+    output[out_y*out_w + out_x] = max_p;
 }
 
+/**
+ * @brief Device implementation of 2×2 max pooling.
+ *
+ * @details Allocates host/device buffers, launches `Cuda_MaxP`, retrieves results,
+ *          and writes the output PNG.
+ */
 void 
 Convolution::DeviceMaxP() {
     std::cout << __func__ << " being performed\r\n";
     
-    size_t height = *image->Getheight();
-    size_t width = *image->GetWidth();
-
-    size_t out_width = (width + 1) / 2;
-    size_t out_height = (height + 1) / 2;
+    size_t h = *image->GetHeight(), w = *image->GetWidth();
+    size_t ow = (w + 1)/2, oh = (h + 1)/2;
 
     newImage = std::make_unique<Image_T>("DeviceMaxP.png");
-    newImage->SetWidth(out_width);
-    newImage->SetHeight(out_height);
-    newImage->SetcomponentCount(out_width * out_height * 4);
+    newImage->SetWidth(ow);
+    newImage->SetHeight(oh);
+    newImage->SetComponentCount(ow * oh * 4);
 
-    Pixel_t* HIN_pixels;
-    Pixel_t* HOUT_pixels;
-    Pixel_t* DIN_pixels;
-    Pixel_t* DOUT_pixels;
+    Pixel_t *HIN, *HOUT, *DIN, *DOUT;
+    size_t in_sz = w*h*sizeof(Pixel_t), out_sz = ow*oh*sizeof(Pixel_t);
 
-    size_t in_size = width * height * sizeof(Pixel_t);
-    size_t out_size = out_width * out_height * sizeof(Pixel_t);
+    cudaMallocHost((void**)&HIN,  in_sz);
+    cudaMallocHost((void**)&HOUT, out_sz);
+    Pixel_t** pix = image->GetPixelARR();
+    for (size_t i = 0; i < w*h; ++i) HIN[i] = *pix[i];
 
-    cudaMallocHost((void**)&HIN_pixels, in_size);
-    cudaMallocHost((void**)&HOUT_pixels, out_size);
+    cudaMalloc((void**)&DIN, in_sz);
+    cudaMalloc((void**)&DOUT,out_sz);
+    cudaMemcpy(DIN, HIN, in_sz, cudaMemcpyHostToDevice);
 
-    Pixel_t** pixels = image->GetPixelARR();
-    for(size_t i = 0; i < width * height; ++i) {
-        HIN_pixels[i] = *pixels[i];
-    }
-
-    cudaMalloc((void**)&DIN_pixels, in_size);
-    cudaMalloc((void**)&DOUT_pixels, out_size);
-
-    cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
-
-    dim3 blockDim(16,16);
-    dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
-                 (out_height + blockDim.y - 1) / blockDim.y);
-
-    Cuda_MaxP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
+    dim3 bd(16,16), gd((ow+15)/16,(oh+15)/16);
+    Cuda_MaxP<<<gd,bd>>>(DIN, DOUT, w, h);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(HOUT, DOUT, out_sz, cudaMemcpyDeviceToHost);
+    stbi_write_png(newImage->GetFPath(), ow, oh, 4, HOUT, ow * 4);
 
-    stbi_write_png(newImage->GetFPath(), out_width, out_height, 4, HOUT_pixels, out_width * 4);
-
-    cudaFreeHost(HIN_pixels);
-    cudaFreeHost(HOUT_pixels);
-    cudaFree(DIN_pixels);
-    cudaFree(DOUT_pixels);
+    cudaFreeHost(HIN);
+    cudaFreeHost(HOUT);
+    cudaFree(DIN);
+    cudaFree(DOUT);
 
     printf("DONE\n");
 }
 
+/**
+ * @kernel Cuda_MinP
+ * @brief Device kernel for 2×2 min pooling.
+ *
+ * @param input  Input image pixel buffer.
+ * @param output Downsampled output buffer.
+ * @param width  Input image width.
+ * @param height Input image height.
+ */
 __global__ void 
 Cuda_MinP(const Pixel_t* input, Pixel_t* output, int width, int height) {
     int out_x = blockIdx.x * blockDim.x + threadIdx.x;
     int out_y = blockIdx.y * blockDim.y + threadIdx.y;
+    int out_w = (width + 1) / 2;
+    if (out_x >= out_w || out_y >= (height + 1) / 2) return;
 
-    int out_width = (width + 1) / 2;
-    int out_height = (height + 1) / 2;
-
-    if (out_x >= out_width || out_y >= out_height) return;
-
-    int in_x = out_x * 2;
-    int in_y = out_y * 2;
-
-    Pixel_t min_pixel = {255,255,255,255};
-
+    Pixel_t min_p = {255,255,255,255};
     for (int dy = 0; dy < 2; ++dy) {
         for (int dx = 0; dx < 2; ++dx) {
-            int x = in_x + dx;
-            int y = in_y + dy;
+            int x = out_x*2 + dx;
+            int y = out_y*2 + dy;
             if (x < width && y < height) {
-                Pixel_t p = input[y * width + x];
-                if (p.r < min_pixel.r) min_pixel.r = p.r;
-                if (p.g < min_pixel.g) min_pixel.g = p.g;
-                if (p.b < min_pixel.b) min_pixel.b = p.b;
-                if (p.a < min_pixel.a) min_pixel.a = p.a;
+                Pixel_t p = input[y*width + x];
+                min_p.r = min(min_p.r, p.r);
+                min_p.g = min(min_p.g, p.g);
+                min_p.b = min(min_p.b, p.b);
+                min_p.a = min(min_p.a, p.a);
             }
         }
     }
-
-    output[out_y * out_width + out_x] = min_pixel;
+    output[out_y*out_w + out_x] = min_p;
 }
 
+/**
+ * @brief Device implementation of 2×2 min pooling.
+ *
+ * @details Allocates host/device buffers, launches `Cuda_MinP`, retrieves results,
+ *          and writes the output PNG.
+ */
 void 
 Convolution::DeviceMinP() {
     std::cout << __func__ << " being performed\r\n";
 
-    size_t height = *image->Getheight();
-    size_t width = *image->GetWidth();
-
-    size_t out_width = (width + 1) / 2;
-    size_t out_height = (height + 1) / 2;
+    size_t h = *image->GetHeight(), w = *image->GetWidth();
+    size_t ow = (w + 1)/2, oh = (h + 1)/2;
 
     newImage = std::make_unique<Image_T>("DeviceMinP.png");
-    newImage->SetWidth(out_width);
-    newImage->SetHeight(out_height);
-    newImage->SetcomponentCount(out_width * out_height * 4);
+    newImage->SetWidth(ow);
+    newImage->SetHeight(oh);
+    newImage->SetComponentCount(ow * oh * 4);
 
-    Pixel_t* HIN_pixels;
-    Pixel_t* HOUT_pixels;
-    Pixel_t* DIN_pixels;
-    Pixel_t* DOUT_pixels;
+    Pixel_t *HIN, *HOUT, *DIN, *DOUT;
+    size_t in_sz = w*h*sizeof(Pixel_t), out_sz = ow*oh*sizeof(Pixel_t);
 
-    size_t in_size = width * height * sizeof(Pixel_t);
-    size_t out_size = out_width * out_height * sizeof(Pixel_t);
+    cudaMallocHost((void**)&HIN,  in_sz);
+    cudaMallocHost((void**)&HOUT, out_sz);
+    Pixel_t** pix = image->GetPixelARR();
+    for (size_t i = 0; i < w*h; ++i) HIN[i] = *pix[i];
 
-    cudaMallocHost((void**)&HIN_pixels, in_size);
-    cudaMallocHost((void**)&HOUT_pixels, out_size);
+    cudaMalloc((void**)&DIN, in_sz);
+    cudaMalloc((void**)&DOUT,out_sz);
+    cudaMemcpy(DIN, HIN, in_sz, cudaMemcpyHostToDevice);
 
-    Pixel_t** pixels = image->GetPixelARR();
-    for (size_t i = 0; i < width * height; ++i) {
-        HIN_pixels[i] = *pixels[i];
-    }
-
-    cudaMalloc((void**)&DIN_pixels, in_size);
-    cudaMalloc((void**)&DOUT_pixels, out_size);
-
-    cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
-
-    dim3 blockDim(16, 16);
-    dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
-                 (out_height + blockDim.y - 1) / blockDim.y);
-
-    Cuda_MinP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
+    dim3 bd(16,16), gd((ow+15)/16,(oh+15)/16);
+    Cuda_MinP<<<gd,bd>>>(DIN, DOUT, w, h);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(HOUT, DOUT, out_sz, cudaMemcpyDeviceToHost);
+    stbi_write_png(newImage->GetFPath(), ow, oh, 4, HOUT, ow * 4);
 
-    stbi_write_png(newImage->GetFPath(), out_width, out_height, 4, HOUT_pixels, out_width * 4);
-
-    cudaFreeHost(HIN_pixels);
-    cudaFreeHost(HOUT_pixels);
-    cudaFree(DIN_pixels);
-    cudaFree(DOUT_pixels);
+    cudaFreeHost(HIN);
+    cudaFreeHost(HOUT);
+    cudaFree(DIN);
+    cudaFree(DOUT);
 
     printf("DONE\n");
 }

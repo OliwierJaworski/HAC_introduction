@@ -34,91 +34,324 @@
  * include, in the user documentation and internal comments to the code,
  * the above Disclaimer and U.S. Government End Users Notice.
  */
+/**
+ * @file accelerated.cpp
+ * @class Convolution
+ * @brief class for performing convolution and pooling operations on images
+ *
+ * @details - manages image pipeline initialization from file paths
+ * @details - dispatches operations to CPU or GPU based on Actors enum
+ * @details - implements Host and Device methods for convolution and pooling
+ */
 
-#include <iostream>
-#include <memory>
-#include <assert.h>
-#include "cuda.h"
-#include "cuda_runtime.h"
-#include "vector"
-#include <cstdarg>
-#include <unordered_map>
-#include <functional>
-#include <optional>
-#include <sstream>
+#include "accelerated.h"
 
-enum Actors{
-    Host,
-    Device
-};
+#define STB_IMAGE_IMPLEMENTATION 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image.h"
+#include "stb_image_write.h"
 
-struct Pixel_t
-{
- unsigned char r, g, b, a;
-};
+/**
+ * @brief Initializes the convolution pipeline with an image path.
+ *
+ * @param image_path_ Path to the input image file.
+ *
+ * @details Creates a new `Image_T` instance, loads image data into memory,
+ *          and populates the pixel pointer array.
+ */
+void 
+Convolution::initialize(const char* image_path_){
+    image = std::make_unique<Image_T>(image_path_);
+    image->loadimage();
+    image->loadPixels();
+}
 
-struct Image_T{
-public:
-    unsigned char* GetData()            { return imageData; };
-    const char* GetFPath()              { return image_path; };
-    int* GetWidth()                     { return &width; }
-    int* Getheight()                    { return &height; }
-    int& Getchannels()                  { return channels; }
-    int* GetcomponentCount()            { return &componentCount; }
-    Pixel_t& GetPixel(size_t index)     { return *pixels[index];}
-    Pixel_t** GetPixelARR()     { return pixels.data();}
+/**
+ * @brief Loads image data from file into memory.
+ *
+ * @details Uses stb_image to read raw pixels into `imageData`.
+ *          Asserts if the file does not exist or resolution is unsupported.
+ */
+void 
+Image_T::loadimage(){
+    printf("Loading image file...\r\n");
+    SetData(stbi_load(image_path, &width, &height, &channels, 4)); 
+    assert(GetData() && "[USER ERROR] : Provided image path does not exist.");  
 
-    void SetData(unsigned char* data_)  { imageData = data_; };
-    void SetWidth(int width_)  { width = width_; };
-    void SetHeight(int height_)  { height = height_; };
-    void SetcomponentCount(int componentCount_)  { componentCount = componentCount_; };
-    void AllocDataSize(size_t size){ imageData = (unsigned char*) malloc(size); };
+    if(*Getheight() != 640 && *GetWidth() != 480 )
+        assert("[USER ERROR] : Provided image resolution is not supported.");
+}
 
-    void loadimage();
-    void loadPixels();
+/**
+ * @brief Dispatches the convolution operation based on execution context.
+ *
+ * @param actor  `Actors::Host` for CPU or `Actors::Device` for GPU.
+ */
+void 
+Convolution::ConvCalc(Actors actor){
+    switch(actor){
+        case Host:
+            Convolution::instance().HostConvCalc();
+            break;
+        case Device:
+            Convolution::instance().DeviceConvCalc();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+    }
+}
 
-    Image_T(const char* image_path_): image_path{ image_path_ }{}
-    ~Image_T(){ if(imageData != nullptr) free(imageData); }
-private:
-    std::vector<Pixel_t*> pixels;
-    int width;
-    int height;
-    int channels{4};
-    int componentCount;
-    unsigned char* imageData;
-    const char* image_path;
-};
+/**
+ * @brief Dispatches the max-pooling operation based on execution context.
+ *
+ * @param actor  `Actors::Host` for CPU or `Actors::Device` for GPU.
+ */
+void 
+Convolution::MaxP(Actors actor){
+    switch(actor){
+        case Host:
+            Convolution::instance().HostMaxP();
+            break;
+        case Device:
+            Convolution::instance().DeviceMaxP();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+    } 
+}
 
-class Convolution{
-public:
-    void ConvCalc(Actors actor);
-    void MaxP(Actors actor);
-    void MinP(Actors actor);
+/**
+ * @brief Dispatches the min-pooling operation based on execution context.
+ *
+ * @param actor  `Actors::Host` for CPU or `Actors::Device` for GPU.
+ */
+void 
+Convolution::MinP(Actors actor){
+    switch(actor){
+        case Host:
+            Convolution::instance().HostMinP();
+            break;
+        case Device:
+            Convolution::instance().DeviceMinP();
+            break;
+        default:
+            std::cout << "user provided unsupported perform() option\n";
+            exit(1);
+    }
+}
 
-    static Convolution& instance(std::optional<char*> path = std::nullopt );
+/**
+ * @brief Performs 2D convolution on the host (CPU).
+ *
+ * @details Applies the 3×3 kernel to each pixel (excluding borders),
+ *          computes greyscale result, allocates output image, and writes PNG.
+ */
+void 
+Convolution::HostConvCalc(){
+    std::cout << __func__ << " being performed\r\n";
 
-    Convolution(const char* image_path_){ initialize( image_path_ ); }
-    ~Convolution(){}
-private:
-    void initialize(const char* image_path_);
-    unsigned char checkbounds(float val);
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
 
-    void HostConvCalc();
-    void HostMaxP();
-    void HostMinP();
+    newImage = std::make_unique<Image_T>(outPath.c_str());
 
-    void DeviceConvCalc();
-    void DeviceMaxP();
-    void DeviceMinP();
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
 
-    std::unique_ptr<Image_T> newImage;
-    std::unique_ptr<Image_T> image;
-    int kernel[3][3]{1,0,-1,
-                          1,0,-1,
-                          1,0,-1};
+    newImage->SetHeight( height-2 ); //because convolution does not calculate using border-pixels
+    newImage->SetWidth( width-2 );   //because convolution does not calculate using border-pixels
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
 
-    int MM[3][3]{-1, 0, 1,
-                 -1, 0, 1,
-                 -1, 0, 1};
-};
+    newImage->AllocDataSize( *newImage->GetcomponentCount() );
 
+    for (int y = 1; y < height-1; y++){
+        for (int x = 1; x < width-1; x++){
+            float acc_rgb[3]{0,0,0};
+
+            for (int ky = -1; ky <= 1; ky++){
+                for (int kx = -1; kx <= 1; kx++){
+                    Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
+                    int weight = kernel[ky + 1][kx + 1];
+
+                    acc_rgb[0] += pixel.r * weight;
+                    acc_rgb[1] += pixel.g * weight;
+                    acc_rgb[2] += pixel.b * weight;                    
+                }
+            }
+            acc_rgb[0] = std::abs(acc_rgb[0]);
+            acc_rgb[1] = std::abs(acc_rgb[1]);
+            acc_rgb[2] = std::abs(acc_rgb[2]);
+
+            float greyscaled = acc_rgb[0]* 0.2126f + acc_rgb[1]* 0.7152f + acc_rgb[2]* 0.0722f;
+            checkbounds(greyscaled);
+
+            int dst_x = x - 1;
+            int dst_y = y - 1;
+
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+            dst->r = greyscaled;
+            dst->g = greyscaled; 
+            dst->b = greyscaled;
+            dst->a = 255;
+        }
+    }
+
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
+    printf("DONE\r\n");
+}
+
+/**
+ * @brief Performs 2×2 max-pooling on the host (CPU).
+ *
+ * @details Divides into 2×2 blocks, picks maximum RGB, writes downsampled PNG.
+ */
+void 
+Convolution::HostMaxP(){
+    //160x120
+    std::cout << __func__ << " being performed\r\n";
+
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
+
+    newImage = std::make_unique<Image_T>(outPath.c_str());
+
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
+
+    newImage->SetHeight( height / 2); 
+    newImage->SetWidth( width / 2); 
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
+
+    newImage->AllocDataSize( *newImage->GetcomponentCount() );
+    
+    for (int y = 0; y < height; y+=2){
+        for (int x = 0; x < width; x+=2){
+            unsigned char max_rgb[3]{0,0,0};
+
+            for (int ky = 0; ky < 2; ky++){
+                for (int kx = 0; kx < 2; kx++){
+                    Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
+
+                    max_rgb[0] = (max_rgb[0] < pixel.r)? pixel.r : max_rgb[0];
+                    max_rgb[1] = (max_rgb[1] < pixel.g)? pixel.g : max_rgb[1];
+                    max_rgb[2] = (max_rgb[2] < pixel.b)? pixel.b : max_rgb[2];
+                }
+            }; 
+            
+            int dst_x = x /2;
+            int dst_y = y /2;
+            
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+            dst->r = max_rgb[0];
+            dst->g = max_rgb[1]; 
+            dst->b = max_rgb[2];
+            dst->a = 255;
+        }
+    }
+
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
+    printf("DONE\r\n");
+}
+
+/**
+ * @brief Performs 2×2 min-pooling on the host (CPU).
+ *
+ * @details Divides into 2×2 blocks, picks minimum RGB, writes downsampled PNG.
+ */
+void 
+Convolution::HostMinP(){
+    //160x120
+    std::cout << __func__ << " being performed\r\n";
+    
+    std::stringstream s;
+    s << __func__ << ".png";
+    std::string outPath = s.str();
+
+    newImage = std::make_unique<Image_T>(outPath.c_str());
+
+    size_t height = *image->Getheight();
+    size_t width = *image->GetWidth();
+    newImage->SetHeight( height / 2); 
+    newImage->SetWidth( width / 2); 
+    newImage->SetcomponentCount( *newImage->GetWidth() * *newImage->Getheight() * 4 );
+
+    newImage->AllocDataSize( *newImage->GetcomponentCount() );
+    
+    for (int y = 0; y < height; y+=2){
+        for (int x = 0; x < width; x+=2){
+            unsigned char min_rgb[3]{255,255,255};
+
+            for (int ky = 0; ky < 2; ky++){
+                for (int kx = 0; kx < 2; kx++){
+                    Pixel_t& pixel = image->GetPixel((x + kx) + (y + ky) * width);
+
+                    min_rgb[0] = (min_rgb[0] > pixel.r)? pixel.r : min_rgb[0];
+                    min_rgb[1] = (min_rgb[1] > pixel.g)? pixel.g : min_rgb[1];
+                    min_rgb[2] = (min_rgb[2] > pixel.b)? pixel.b : min_rgb[2];
+                }
+            }; 
+            
+            int dst_x = x /2;
+            int dst_y = y /2;
+
+            Pixel_t* dst = (Pixel_t*)&newImage->GetData()[ (dst_y * (*newImage->GetWidth()) + dst_x) * 4 ];
+            dst->r = min_rgb[0];
+            dst->g = min_rgb[1]; 
+            dst->b = min_rgb[2];
+            dst->a = 255;
+        }
+    }
+
+    stbi_write_png(newImage->GetFPath(), *newImage->GetWidth(), *newImage->Getheight(), 4, newImage->GetData(), 4 * (*newImage->GetWidth()) );
+    printf("DONE\r\n");
+}
+
+/**
+ * @brief Clamps a float to the [0,255] range and returns as unsigned char.
+ *
+ * @param val  Input float value.
+ * @return     0 if val<0, 255 if val>255, else static_cast<unsigned char>(val).
+ */
+unsigned char 
+Convolution::checkbounds(float val) {
+    return val < 0 ? 0 : (val > 255 ? 255 : val); //cool effect
+}
+
+/**
+ * @brief Populates pixel pointers from raw image data.
+ *
+ * @details Iterates each (x,y) and stores pointer to Pixel_t in `pixels`.
+ */
+void 
+Image_T::loadPixels(){
+    for (int y = 0; y < height; y++){
+        for (int x = 0; x < width; x++){
+            Pixel_t* ptrPixel = (Pixel_t*)&imageData[y * width * 4 + 4 * x];
+            pixels.push_back(ptrPixel);    
+        }
+    }
+}
+
+/**
+ * @brief Returns the singleton Convolution instance.
+ *
+ * @param path  Optional path on first call to create instance.
+ * @return      Reference to the global `Convolution` object.
+ *
+ * @details Constructs on first call with path, throws if no path provided.
+ */
+Convolution& 
+Convolution::instance(std::optional<char*> path){
+    static Convolution* conv = nullptr;
+
+    if (!conv && path.has_value()) {
+        conv = new Convolution(path.value());
+    } else if (!conv && !path.has_value()) {
+        throw std::runtime_error("Convolution::instance() needs a path on first call");
+    }
+    return *conv;
+}
