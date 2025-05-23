@@ -13,6 +13,7 @@ Nsight Systems Analyse (Jetson Nano)
 De performantieanalyse met Nsight Systems toont aan dat de grootste bottleneck zich bevindt in de functie cudaMemcpyToSymbol, goed voor 87% van de totale CUDA API-tijd (±518 ms voor 2 oproepen). Daarnaast veroorzaakt sem_timedwait 72% van de OS-runtime tijd, wat wijst op aanzienlijke CPU-wachttijden. De eigenlijke CUDA-kernels (row/column convoluties) zijn efficiënt met gemiddelde looptijden onder 3 ms.
 🛠️ Optimalisatiesuggesties: vermijd blocking API-calls en vervang cudaMemcpyToSymbol door asynchrone geheugenoverdracht (cudaMemcpyAsync) waar mogelijk.
 
+- [results(in png)](/results)
 
 
 
