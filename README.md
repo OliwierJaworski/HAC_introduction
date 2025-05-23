@@ -16,7 +16,13 @@ De performantieanalyse met Nsight Systems toont aan dat de grootste bottleneck z
 - [results(in png)](/results)
 
 
+Disclaimer:
 
+JetPack 4.6.1 does not include NVIDIA Nsight Compute  as part of the CUDA Toolkit 10.2 but JetPack 6.2 includes NVIDIA Nsight Compute v2023.2 as part of the CUDA Toolkit 12.2
+
+https://developer.nvidia.com/embedded/jetpack
+
+/opt/nvidia/nsight-compute lacks nsight compute
 
 
 /*
