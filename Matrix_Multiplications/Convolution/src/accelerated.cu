@@ -357,12 +357,36 @@ Convolution::DeviceMaxP() {
 
     cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
 
+    cudaEvent_t startEvent, stopEvent;
+    cudaEventCreate(&startEvent);
+    cudaEventCreate(&stopEvent);
+
+    float totalTime = 0.0f;
+    float warmupTime = 0.0f;
+    float time = 0.0f;
+
     dim3 blockDim(16,16);
     dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
                  (out_height + blockDim.y - 1) / blockDim.y);
-
+                 
+    for (int i = 0; i < 2; ++i) {
+    cudaEventRecord(startEvent, 0);
     Cuda_MaxP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
     cudaDeviceSynchronize();
+
+    cudaEventRecord(stopEvent, 0);
+    cudaEventSynchronize(stopEvent);
+    cudaEventElapsedTime(&time, startEvent, stopEvent);
+
+    if (i == 0) {
+        warmupTime = time;
+    } else {
+        totalTime = time;
+    }
+
+    }
+    printf("Warmup Time: %.4f ms\n", warmupTime);
+    printf("Total Time: %.4f ms\n", totalTime);
 
     cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
 
@@ -444,12 +468,38 @@ Convolution::DeviceMinP() {
 
     cudaMemcpy(DIN_pixels, HIN_pixels, in_size, cudaMemcpyHostToDevice);
 
+    cudaEvent_t startEvent, stopEvent;
+    cudaEventCreate(&startEvent);
+    cudaEventCreate(&stopEvent);
+
+    float totalTime = 0.0f;
+    float warmupTime = 0.0f;
+    float time = 0.0f;
+
     dim3 blockDim(16, 16);
     dim3 gridDim((out_width + blockDim.x - 1) / blockDim.x,
                  (out_height + blockDim.y - 1) / blockDim.y);
 
+    for (int i = 0; i < 2; ++i) {
+
+    cudaEventRecord(startEvent, 0);
     Cuda_MinP<<<gridDim, blockDim>>>(DIN_pixels, DOUT_pixels, width, height);
     cudaDeviceSynchronize();
+
+    cudaEventRecord(stopEvent, 0);
+    cudaEventSynchronize(stopEvent);
+    cudaEventElapsedTime(&time, startEvent, stopEvent);
+
+    if (i == 0) {
+        warmupTime = time;
+    } else {
+        totalTime = time;
+    }
+
+    }
+    
+    printf("Warmup Time: %.4f ms\n", warmupTime);
+    printf("Total Time: %.4f ms\n", totalTime);
 
     cudaMemcpy(HOUT_pixels, DOUT_pixels, out_size, cudaMemcpyDeviceToHost);
 
